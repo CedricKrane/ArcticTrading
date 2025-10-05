@@ -1,27 +1,35 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
 
 export default function TradesPage() {
   const [trades, setTrades] = useState<any[]>([]);
   const [symbol, setSymbol] = useState("");
-  const [entry, setEntry] = useState("");
-  const [exit, setExit] = useState("");
-  const [qty, setQty] = useState("");
+  const [entryPrice, setEntryPrice] = useState("");
+  const [exitPrice, setExitPrice] = useState("");
+  const [size, setSize] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [tradeType, setTradeType] = useState<"long" | "short">("long");
 
-  // 🔹 Hent trades fra Supabase (kun for innlogget bruker)
+  // 🔹 Hent trades for innlogget bruker
   useEffect(() => {
     const fetchTrades = async () => {
       const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -33,7 +41,6 @@ export default function TradesPage() {
 
       const user = userData?.user;
       if (!user) {
-        // Ikke innlogget - vis ingen trades
         setTrades([]);
         return;
       }
@@ -54,11 +61,10 @@ export default function TradesPage() {
     fetchTrades();
   }, []);
 
-  // 🔹 Legg til ny trade
+  // 🔹 Legg til ny trade (med støtte for long/short og automatisk PnL)
   const handleAddTrade = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Hent innlogget bruker fra Supabase Auth
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -68,52 +74,72 @@ export default function TradesPage() {
       return;
     }
 
-    // Enkel validering
-    if (!symbol || !entry || !exit || !qty) {
-      alert("Fyll inn symbol, entry, exit og qty.");
+    // Valider input
+    if (!symbol || !entryPrice || !exitPrice || !size) {
+      alert("Fyll inn symbol, entry, exit og size.");
       return;
     }
 
-    const pnl = (parseFloat(exit) - parseFloat(entry)) * parseFloat(qty);
+    const entryNum = parseFloat(entryPrice);
+    const exitNum = parseFloat(exitPrice);
+    const sizeNum = parseFloat(size);
+    const type = tradeType || "long";
 
+    // 🔹 Kalkuler PnL
+    let pnlUsd = 0;
+    let pnlPercent = 0;
+
+    if (type === "long") {
+      pnlUsd = (exitNum - entryNum) * sizeNum;
+      pnlPercent = ((exitNum - entryNum) / entryNum) * 100;
+    } else {
+      pnlUsd = (entryNum - exitNum) * sizeNum;
+      pnlPercent = ((entryNum - exitNum) / entryNum) * 100;
+    }
+
+    // 🔹 Send til Supabase
     const { error } = await supabase.from("trades").insert([
       {
         user_id: user.id,
         symbol,
-        entry: parseFloat(entry),
-        exit: parseFloat(exit),
-        qty: parseFloat(qty),
-        pnl,
+        trade_type: type,
+        entry_price: entryNum,
+        exit_price: exitNum,
+        size: sizeNum,
+        pnl_usd: pnlUsd,
+        pnl_percent: pnlPercent,
         date,
       },
     ]);
 
     if (error) {
       console.error("Feil ved lagring av trade:", error);
-      alert("Kunne ikke lagre trade. Sjekk konsollen for detaljer.");
-    } else {
-      // Nullstill inputfeltene etter lagring
-      setSymbol("");
-      setEntry("");
-      setExit("");
-      setQty("");
-      setDate(new Date().toISOString().split("T")[0]);
-
-      // Hent oppdatert liste med trades for brukeren
-      const { data } = await supabase
-        .from("trades")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("date", { ascending: false });
-
-      setTrades(data || []);
+      alert("Kunne ikke lagre trade.");
+      return;
     }
+
+    // Nullstill inputs
+    setSymbol("");
+    setEntryPrice("");
+    setExitPrice("");
+    setSize("");
+    setDate(new Date().toISOString().split("T")[0]);
+
+    // Hent oppdatert liste
+    const { data } = await supabase
+      .from("trades")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("date", { ascending: false });
+
+    setTrades(data || []);
   };
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Trades</h1>
 
+      {/* 🔹 Liste over trades */}
       <Card>
         <CardHeader>
           <CardTitle>Historiske trades</CardTitle>
@@ -124,10 +150,12 @@ export default function TradesPage() {
               <TableRow>
                 <TableHead>Dato</TableHead>
                 <TableHead>Symbol</TableHead>
+                <TableHead>Type</TableHead>
                 <TableHead>Entry</TableHead>
                 <TableHead>Exit</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>PnL</TableHead>
+                <TableHead>Size</TableHead>
+                <TableHead>PnL (USD)</TableHead>
+                <TableHead>PnL (%)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -136,26 +164,36 @@ export default function TradesPage() {
                   <TableRow key={trade.id}>
                     <TableCell>{trade.date}</TableCell>
                     <TableCell>{trade.symbol}</TableCell>
-                    <TableCell>{trade.entry}</TableCell>
-                    <TableCell>{trade.exit}</TableCell>
-                    <TableCell>{trade.qty}</TableCell>
+                    <TableCell className="capitalize">
+                      {trade.trade_type}
+                    </TableCell>
+                    <TableCell>{trade.entry_price}</TableCell>
+                    <TableCell>{trade.exit_price}</TableCell>
+                    <TableCell>{trade.size}</TableCell>
                     <TableCell
-                      className={trade.pnl >= 0 ? "text-green-500" : "text-red-500"}
+                      className={
+                        trade.pnl_usd >= 0 ? "text-green-500" : "text-red-500"
+                      }
                     >
-                      {trade.pnl !== undefined && trade.pnl !== null ? (
-                        <>
-                          {trade.pnl >= 0 ? "+" : ""}
-                          {trade.pnl.toFixed(2)}
-                        </>
-                      ) : (
-                        "—"
-                      )}
+                      {trade.pnl_usd >= 0 ? "+" : ""}
+                      {trade.pnl_usd.toFixed(2)}
+                    </TableCell>
+                    <TableCell
+                      className={
+                        trade.pnl_percent >= 0 ? "text-green-500" : "text-red-500"
+                      }
+                    >
+                      {trade.pnl_percent >= 0 ? "+" : ""}
+                      {trade.pnl_percent.toFixed(2)}%
                     </TableCell>
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-gray-500">
+                  <TableCell
+                    colSpan={8}
+                    className="text-center text-gray-500"
+                  >
                     Ingen trades funnet
                   </TableCell>
                 </TableRow>
@@ -165,6 +203,7 @@ export default function TradesPage() {
         </CardContent>
       </Card>
 
+      {/* 🔹 Skjema for å legge til ny trade */}
       <Card>
         <CardHeader>
           <CardTitle>Legg til ny trade</CardTitle>
@@ -174,39 +213,57 @@ export default function TradesPage() {
             <div>
               <Label>Symbol</Label>
               <Input
-                placeholder="Eks: AAPL"
+                placeholder="Eks: BTCUSD"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 required
               />
             </div>
+
             <div>
-              <Label>Entry</Label>
+              <Label>Type</Label>
+              <select
+                value={tradeType}
+                onChange={(e) =>
+                  setTradeType(e.target.value as "long" | "short")
+                }
+                className="w-full p-2 border rounded"
+              >
+                <option value="long">Long</option>
+                <option value="short">Short</option>
+              </select>
+            </div>
+
+            <div>
+              <Label>Entry Price</Label>
               <Input
                 type="number"
-                value={entry}
-                onChange={(e) => setEntry(e.target.value)}
+                value={entryPrice}
+                onChange={(e) => setEntryPrice(e.target.value)}
                 required
               />
             </div>
+
             <div>
-              <Label>Exit</Label>
+              <Label>Exit Price</Label>
               <Input
                 type="number"
-                value={exit}
-                onChange={(e) => setExit(e.target.value)}
+                value={exitPrice}
+                onChange={(e) => setExitPrice(e.target.value)}
                 required
               />
             </div>
+
             <div>
-              <Label>Qty</Label>
+              <Label>Size</Label>
               <Input
                 type="number"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
+                value={size}
+                onChange={(e) => setSize(e.target.value)}
                 required
               />
             </div>
+
             <div>
               <Label>Dato</Label>
               <Input
@@ -216,6 +273,7 @@ export default function TradesPage() {
                 required
               />
             </div>
+
             <Button type="submit" className="md:col-span-2">
               Legg til
             </Button>

@@ -15,6 +15,8 @@ import { Settings } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 
+// 🔧 HER: Oppdater Trade-typen for å matche nye kolonnenavn fra trades-siden
+// ✅ NYTT:
 interface Trade {
   id: number;
   user_id?: string;
@@ -24,9 +26,12 @@ interface Trade {
   entry_price?: number;
   exit_price?: number;
   size?: number;
-  stop?: number; // valgfritt (ikke i DB nå med mindre du legger til)
-  pnl?: number;
+  stop?: number; // valgfritt
+  // Bruk de nye feltene vi lagrer fra trades-siden:
+  pnl_usd?: number;
+  pnl_percent?: number;
 }
+
 
 export default function DashboardPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -92,31 +97,38 @@ export default function DashboardPage() {
         return;
       }
 
-      // Mapp til typed Trade (noen felter kan mangle)
-      const tArr = data.map((r: any) => ({
-        id: r.id,
-        user_id: r.user_id,
-        date: r.date,
-        symbol: r.symbol,
-        trade_type: r.trade_type,
-        entry_price: r.entry_price,
-        exit_price: r.exit_price,
-        size: r.size,
-        stop: r.stop, // hvis ikke finnes - undefined
-        pnl: r.pnl,
-      })) as Trade[];
+      // 🔧 HER: Erstatt mapping for å bruke pnl_usd / pnl_percent
+// ✅ NYTT:
+const tArr = data.map((r: any) => ({
+  id: r.id,
+  user_id: r.user_id,
+  date: r.date,
+  symbol: r.symbol,
+  trade_type: r.trade_type,
+  entry_price: r.entry_price,
+  exit_price: r.exit_price,
+  size: r.size,
+  stop: r.stop, // hvis ikke finnes - undefined
+  // Les de nye feltene fra DB. Hvis gamle navn finnes, fallback til det.
+  pnl_usd: r.pnl_usd !== undefined ? Number(r.pnl_usd) : (r.pnl !== undefined ? Number(r.pnl) : 0),
+  pnl_percent: r.pnl_percent !== undefined ? Number(r.pnl_percent) : 0,
+})) as Trade[];
+
 
       setTrades(tArr);
 
-      const totalPnl = tArr.reduce((acc, t) => acc + (t.pnl || 0), 0);
-      setCurrentCapital(startingCapital + totalPnl);
+      // 🔧 HER: Bruk pnl_usd fra mapped trades
+// ✅ NYTT:
+const totalPnl = tArr.reduce((acc, t) => acc + (Number(t.pnl_usd ?? 0)), 0);
+setCurrentCapital(startingCapital + Number(totalPnl));
 
-      // Win rate
-      const wins = tArr.filter((t) => (t.pnl || 0) > 0).length;
-      const losses = tArr.filter((t) => (t.pnl || 0) < 0).length;
-      const total = wins + losses;
-      const rate = total > 0 ? (wins / total) * 100 : 0;
-      setWinRate(rate);
+// Win rate (basert på pnl_usd)
+const wins = tArr.filter((t) => Number(t.pnl_usd ?? 0) > 0).length;
+const losses = tArr.filter((t) => Number(t.pnl_usd ?? 0) < 0).length;
+const total = wins + losses;
+const rate = total > 0 ? (wins / total) * 100 : 0;
+setWinRate(Number(rate.toFixed(2)));
+
 
       // Gjennomsnittlig R:R (krever stop i raden)
       const rrValues = tArr

@@ -20,6 +20,23 @@ import {
   TableCell,
 } from "@/components/ui/table";
 
+// ✅ NYTT: Flytt beregning av PnL ut i en egen funksjon
+const calculatePnL = (entry: number, exit: number, size: number, type: "long" | "short") => {
+  let pnlUsd = 0;
+  let pnlPercent = 0;
+
+  if (type === "long") {
+    pnlUsd = (exit - entry) * size;
+    pnlPercent = ((exit - entry) / entry) * 100;
+  } else {
+    pnlUsd = (entry - exit) * size;
+    pnlPercent = ((entry - exit) / entry) * 100;
+  }
+
+  return { pnlUsd: Number(pnlUsd.toFixed(2)), pnlPercent: Number(pnlPercent.toFixed(2)) };
+};
+
+
 export default function TradesPage() {
   const [trades, setTrades] = useState<any[]>([]);
   const [symbol, setSymbol] = useState("");
@@ -86,16 +103,8 @@ export default function TradesPage() {
     const type = tradeType || "long";
 
     // 🔹 Kalkuler PnL
-    let pnlUsd = 0;
-    let pnlPercent = 0;
-
-    if (type === "long") {
-      pnlUsd = (exitNum - entryNum) * sizeNum;
-      pnlPercent = ((exitNum - entryNum) / entryNum) * 100;
-    } else {
-      pnlUsd = (entryNum - exitNum) * sizeNum;
-      pnlPercent = ((entryNum - exitNum) / entryNum) * 100;
-    }
+    // 🔧 HER: bruk funksjonen vår i stedet for manuell beregning
+    const { pnlUsd, pnlPercent } = calculatePnL(entryNum, exitNum, sizeNum, type);
 
     // 🔹 Send til Supabase
     const { error } = await supabase.from("trades").insert([
